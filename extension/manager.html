@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>超星课件批量下载</title><link rel="stylesheet" href="manager.css"></head>
+<body>
+<main>
+  <header><div class="logo">课</div><div><p class="eyebrow">CHAOXING COURSEWARE</p><h1>把课件，整理到一起。</h1><p id="course">正在读取课程…</p></div><span class="tag">Chrome · Edge</span></header>
+  <div id="notice" class="notice" role="status">请保持本页打开，下载使用当前浏览器的学习通登录状态。</div>
+  <div class="workspace">
+    <section class="catalog panel">
+      <div class="section-head"><div><h2>选择课节</h2><p id="selection">正在载入目录</p></div><button id="reload" class="quiet">刷新目录</button></div>
+      <input id="search" type="search" placeholder="搜索章节名称或编号" aria-label="搜索章节">
+      <div class="tools"><label><input type="checkbox" id="all"> 全选筛选结果</label><button id="invert" class="quiet">反选</button><button id="has-files" class="quiet">只选已识别课件</button></div>
+      <p class="selection-hint">想挑选具体文件？先扫描课件，再在课节下逐份勾选。</p>
+      <div id="chapters" class="chapters" aria-label="课程章节列表"></div>
+    </section>
+    <aside>
+      <section class="panel settings"><h2>下载设置</h2>
+        <label class="setting"><input id="zip" type="checkbox" checked><span><strong>打包为 ZIP 压缩包</strong><small>取消勾选后，课件逐份自动保存</small></span></label>
+        <label class="setting"><input id="number" type="checkbox"><span><strong>文件名包含章节编号</strong><small>默认使用章节名，例如：集合.pdf</small></span></label>
+        <label class="setting"><input id="media" type="checkbox"><span><strong>同时下载音视频</strong><small>默认只下载文档、附件和课件图片</small></span></label>
+        <div class="naming">同节多份课件：章节名（1）.pptx<br>无课件的章节会自动跳过；失败项会单独显示。<br>ZIP 每包约 200 MB，超过后自动分包。</div>
+        <button id="start" class="primary" disabled>下载选中课件</button>
+        <div class="secondary"><button id="scan" disabled>扫描并选择课件</button><button id="stop" disabled>停止</button></div>
+        <button id="retry" class="quiet retry" disabled>重试失败项</button>
+        <button id="clear-saved" class="quiet retry" disabled>清除所选课件的保存记录</button>
+      </section>
+      <section class="panel progress-panel"><div class="section-head"><h2>任务进度</h2><span id="percent">0%</span></div><progress id="progress" max="100" value="0"></progress><p id="summary">尚未开始</p><p id="transfer" aria-live="polite"></p><div class="secondary"><button id="report" disabled>保存任务记录</button><button id="downloads">打开下载记录</button></div></section>
+      <p class="footnote">课件保存到浏览器默认下载目录中的“超星课件”文件夹。下载期间请勿关闭此任务页。</p>
+    </aside>
+  </div>
+  <section class="panel log-panel"><h2>任务记录</h2><ol id="log" aria-live="polite"><li>准备就绪后，勾选课节并开始下载。</li></ol></section>
+</main>
+<script src="vendor/jszip.min.js"></script><script type="module" src="manager.js"></script>
+</body></html>
