@@ -3,6 +3,26 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import JSZip from 'jszip';
 import http from 'node:http';
+test('Batch scan overlaps requests for different chapters',async()=>{
+  const {context,manager}=await setup();
+  let active=0, peak=0;
+  try {
+    await context.route('**/studentstudyAjax?**',async route=>{
+      active++;
+      peak=Math.max(peak,active);
+      try {
+        await new Promise(resolve=>setTimeout(resolve,200));
+        const id=new URL(route.request().url()).searchParams.get('chapterId');
+        await route.fulfill({contentType:'text/html; charset=utf-8',body:fragment(id)});
+      } finally { active--; }
+    });
+    await manager.locator('#all').check();
+    await manager.locator('#scan').click();
+    await expect(manager.locator('#notice')).toContainText('扫描完成');
+    expect(peak).toBeGreaterThan(1);
+    await expect(manager.locator('#summary')).toContainText('课节 5/5');
+  } finally { await context.close(); }
+});
 test('Preview lets the user remove a PDF from the download selection',async()=>{
   const {context,manager,worker}=await setup();
   try {

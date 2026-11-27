@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "超星课件批量下载",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "多选章节，自动下载课件，可选 ZIP 打包，跳过无课件章节，按章节名称保存。",
   "minimum_chrome_version": "110",
   "permissions": ["activeTab", "scripting", "downloads", "declarativeNetRequestWithHostAccess"],

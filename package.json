@@ -1,7 +1,7 @@
 {
   "name": "chaoxing-courseware-downloader",
   "private": true,
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "module",
   "scripts": { "test": "node --test tests/*.test.js", "test:browser": "playwright test" },
   "dependencies": { "jszip": "3.10.1" },

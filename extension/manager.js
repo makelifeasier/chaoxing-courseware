@@ -3,6 +3,11 @@ import {allowedURL, resourceURL, safeName, outputName, uniqueName, parseCatalog,
 const $ = id => document.getElementById(id);
 const model = { chapters: [], source: null, busy: false, cancelled: false, controller: null, records: [], failedIds: new Set(), used: new Set(), archive: null, archiveBytes: 0, archivePart: 0, saved: 0, discovered: 0, skipped: 0, errors: 0, scanErrors: new Set(), saveErrors: new Set(), objectURLs: new Map() };
 const ZIP_LIMIT = 200 * 1024 * 1024;
+const SCAN_CONCURRENCY = 6;
+const activeRequests = new Set();
+function abortRequests() {
+  for (const controller of activeRequests) controller.abort();
+}
 const parseHTML = html => new DOMParser().parseFromString(html, 'text/html');
 const statusLabels = {pending:'待扫描',working:'扫描中',empty:'无课件 · 跳过',ready:'有课件',done:'已下载',error:'失败',stopped:'已停止'};
 
@@ -207,7 +212,9 @@ async function request(url, binary = false) {
   checkStopped();
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const controller = new AbortController(); model.controller = controller;
+    checkStopped();
+    const controller = new AbortController();
+    activeRequests.add(controller);
     const timeout = setTimeout(() => controller.abort(), binary ? 180000 : 45000);
     try {
       const response = await fetch(url, {credentials:'include', signal:controller.signal, cache:'no-store'});
@@ -242,7 +249,7 @@ async function request(url, binary = false) {
       lastError = error.name === 'AbortError' ? new Error('网络请求超时') : error;
       if (/登录|权限|未授权|不安全|256 MB|网页|错误信息|地址不在/.test(lastError.message)) break;
       if (attempt < 2) await sleep(700 * (attempt + 1));
-    } finally { clearTimeout(timeout); if (model.controller === controller) model.controller = null; }
+    } finally { clearTimeout(timeout); activeRequests.delete(controller); }
   }
   throw lastError;
 }
@@ -297,7 +304,7 @@ previewDialog.addEventListener('close',()=>{
   const session = previewSession;
   if (!session) return;
   session.closed = true;
-  if (!session.finished) { model.cancelled = true; model.controller?.abort(); }
+  if (!session.finished) { model.cancelled = true; abortRequests(); }
   else previewSession = null;
   $('preview-content').replaceChildren();
   if (session.url) URL.revokeObjectURL(session.url);
@@ -325,7 +332,6 @@ async function scanChapter(c, includeMedia) {
     const card = parseHTML(await request(url)); assertCoursePage(card);
     if (!card.querySelector('.ans-cc, iframe[objectid]') && ![...card.scripts].some(s=>/mArg\s*=\s*\{/.test(s.textContent))) throw new Error('卡片内容无法识别，已标记为失败而非空章节');
     for (const file of parseResources(card, includeMedia)) found.set(file.objectid,file);
-    await sleep(180);
   }
   c.fileChoices ||= new Map();
   const previous = new Map(c.files.map(file=>[file.objectid,file]));
@@ -483,7 +489,7 @@ async function run(scanOnly = false, retry = false) {
   notice('任务进行中，请保持本页打开。'); let completed = 0;
   const zipChapters = new Set();
   try {
-    for (const c of selected) {
+    const processChapter = async c => {
       checkStopped();
       try {
         const needsScan = c.mediaSetting === undefined;
@@ -497,7 +503,22 @@ async function run(scanOnly = false, retry = false) {
         c.state = 'error'; c.error = e.message; c.scanError = e.message; model.errors++; model.failedIds.add(c.id); model.scanErrors.add(c.id);
         log(`${c.number} ${c.title}：${e.message}`,true);
       }
-      completed++; updateProgress(completed,selected.length); render(); await sleep(350);
+      completed++; updateProgress(completed,selected.length); render();
+    };
+    if (scanOnly) {
+      let next = 0;
+      const workers = Array.from({length:Math.min(SCAN_CONCURRENCY,selected.length)},async()=>{
+        while (!model.cancelled && next < selected.length) await processChapter(selected[next++]);
+      });
+      const results = await Promise.allSettled(workers);
+      checkStopped();
+      const failure = results.find(result=>result.status==='rejected');
+      if (failure) throw failure.reason;
+    } else {
+      for (const c of selected) {
+        await processChapter(c);
+        await sleep(350);
+      }
     }
     if (!scanOnly && options.zip) {
       try { await flushArchive(); for (const c of zipChapters) if (!model.failedIds.has(c.id)) c.state = 'done'; }
@@ -514,7 +535,7 @@ async function run(scanOnly = false, retry = false) {
     notice(e.name === 'AbortError' ? '任务已停止。已保存的文件保留；当前未保存的 ZIP 内容已放弃，请重新下载需要的章节。' : e.message,true);
     log(e.name === 'AbortError' ? '用户停止了任务。' : e.message,true);
   } finally {
-    model.archive = null; model.archiveBytes = 0; model.busy = false; model.controller = null;
+    model.archive = null; model.archiveBytes = 0; model.busy = false;
     $('transfer').textContent = ''; updateProgress(completed,selected.length); render();
   }
 }
@@ -538,7 +559,7 @@ $('clear-saved').addEventListener('click',()=>{
   render();
   notice('已清除所选课件的保存记录，可以重新下载。');
 });
-$('stop').addEventListener('click',()=>{model.cancelled=true; model.controller?.abort(); $('stop').disabled=true; for (const id of model.objectURLs.keys()) void chrome.downloads.cancel(id).catch(()=>{});});
+$('stop').addEventListener('click',()=>{model.cancelled=true; abortRequests(); $('stop').disabled=true; for (const id of model.objectURLs.keys()) void chrome.downloads.cancel(id).catch(()=>{});});
 $('reload').addEventListener('click',()=>void init());
 $('search').addEventListener('input',render);
 for (const id of ['number','zip']) $(id).addEventListener('change',render);
