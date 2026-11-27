@@ -2,7 +2,7 @@
 
 在学习通打开课程，勾选几节课，就能把需要的课件一次下载。支持 Chrome 和 Edge。
 
-[下载安装 ZIP](https://github.com/makelifeasier/chaoxing-courseware/archive/refs/heads/main.zip) · [安装步骤](#安装)
+[下载 Windows 安装器](https://github.com/makelifeasier/chaoxing-courseware/raw/refs/heads/main/installer/ChaoxingCoursewareSetup.exe) · [下载 ZIP](https://github.com/makelifeasier/chaoxing-courseware/archive/refs/heads/main.zip) · [安装步骤](#安装)
 
 ![课件选择面板。映射一节扫描到两份课件，只勾选其中一份，旁边可选择 ZIP 打包。](docs/courseware-selection.jpg)
 
@@ -17,6 +17,18 @@
 | 有文件失败，或者中途关了页面 | 查看每份文件的结果，重试失败项，或重新打开同一课程继续下载。已保存的文件会跳过 |
 
 ## 安装
+
+**Windows 安装器**
+
+1. 下载并打开安装器，勾选 Edge、Chrome 或两者，点击「准备安装」。它会解压扩展、复制文件夹路径，并打开对应的扩展管理页。
+2. 在每个浏览器开启开发人员模式，点「加载解压缩的扩展」，粘贴路径并选定文件夹。以前用同一安装器装过的，在扩展页点「重新加载」即可。
+3. 浏览器显示扩展后，回到安装器点「已完成安装」。如果勾选了清理，这时只会删除安装器文件。
+
+安装器无需管理员权限，扩展保存到当前用户的应用数据目录。安装器暂未签名。可查看或自行编译 [安装器源码](installer/Program.cs) 和 [构建脚本](installer/build.ps1)。
+
+SHA-256：`4789E0295E9C272BD3993152E795D9B7FF53FB4337AAAE358B631F0BFB5471EC`
+
+**ZIP 手动安装**
 
 1. 下载上方的 ZIP 并解压。
 2. 在 Chrome 打开 `chrome://extensions/`，或在 Edge 打开 `edge://extensions/`。
