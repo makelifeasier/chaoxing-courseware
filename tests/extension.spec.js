@@ -3,6 +3,47 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import JSZip from 'jszip';
 import http from 'node:http';
+test('Cached scans reuse results and ZIP can split PDF from video',async()=>{
+  const {context,manager,worker,requests}=await setup();
+  try {
+    await context.route('**/knowledge/cards?**',route=>{
+      const attachments=[
+        {type:'document',property:{objectid:'object_10000001',name:'讲义.pdf'}},
+        {type:'video',property:{objectid:'video_10000001',name:'例题（视频）.mp4'}}
+      ];
+      return route.fulfill({contentType:'text/html; charset=utf-8',body:`<div class="ans-cc"></div><script>mArg=${JSON.stringify({attachments})};</script>`});
+    });
+    await manager.getByRole('checkbox',{name:'1.1 集合',exact:true}).check();
+    const scans=()=>requests.filter(url=>url.includes('/studentstudyAjax')).length;
+    await manager.locator('#scan').click();
+    await expect(manager.locator('#notice')).toContainText('扫描完成');
+    const first=scans();
+    await manager.locator('#scan').click();
+    await expect(manager.locator('#notice')).toContainText('扫描完成');
+    expect(scans()).toBe(first);
+    await manager.locator('#rescan').click();
+    await expect(manager.locator('#notice')).toContainText('扫描完成');
+    expect(scans()).toBe(first+1);
+    await manager.locator('#media').check();
+    const video=manager.getByRole('checkbox',{name:/例题\.mp4/});
+    await expect(video).not.toBeChecked();
+    await video.check();
+    const group=manager.getByRole('group',{name:'文件名方式 例题.mp4'});
+    await group.getByRole('button',{name:'原名',exact:true}).click();
+    await expect(group.getByRole('button',{name:'原名',exact:true})).toHaveAttribute('aria-pressed','true');
+    await manager.locator('#split-zip').check();
+    await manager.locator('#start').click();
+    await expect(manager.locator('#notice')).toContainText('下载完成');
+    const saved=await worker.evaluate(()=>chrome.downloads.search({}));
+    expect(saved).toHaveLength(2);
+    for (const [type,filename] of [['PDF','集合（1）.pdf'],['音视频','例题.mp4']]) {
+      const item=saved.find(file=>file.filename.includes('_'+type+'_'));
+      expect(item).toBeTruthy();
+      const zip=await JSZip.loadAsync(await fs.readFile(item.filename),{checkCRC32:true});
+      expect(Object.keys(zip.files)).toEqual([filename]);
+    }
+  }finally{await context.close();}
+});
 test('Media visibility does not rescan, and saved files can keep their original name',async()=>{
   const {context,manager,worker,requests}=await setup();
   try {
@@ -23,7 +64,7 @@ test('Media visibility does not rescan, and saved files can keep their original 
     await manager.getByRole('button',{name:'预览 录音.mp3',exact:true}).click();
     await expect(manager.locator('#preview-content audio')).toHaveAttribute('src',/audio_10000001/);
     await manager.getByRole('button',{name:'关闭',exact:true}).click();
-    await manager.getByRole('combobox',{name:'文件名方式 原始名字.pdf'}).selectOption('original');
+    await manager.getByRole('group',{name:'文件名方式 原始名字.pdf'}).getByRole('button',{name:'原名',exact:true}).click();
     await manager.locator('#zip').uncheck();
     await manager.locator('#start').click();
     await expect(manager.locator('#notice')).toContainText('下载完成');
