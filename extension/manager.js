@@ -26,6 +26,10 @@ function chooseFile(chapter, file, selected) {
   if (selected) chapter.selected = true;
 }
 function chosenFiles(chapter) { return chapter.files.filter(file=>file.selected !== false); }
+function needsMediaRescan(chapter, includeMedia) {
+  return !chapter.containerOnly && chapter.mediaSetting !== undefined && chapter.mediaSetting !== includeMedia;
+}
+const mediaRescanHint = '音视频设置已更改。请重新扫描相关课节，确认清单后再下载。';
 function checkpoint() {
   if (!model.key || !model.loaded) return;
   try {
@@ -388,6 +392,13 @@ async function run(scanOnly = false, retry = false) {
   const selected = model.chapters.filter(c=>retry ? retryable(c) : c.selected);
   if (!selected.length) return;
   const options = {zip:$('zip').checked,number:$('number').checked,media:$('media').checked,retry};
+  const stale = selected.filter(c=>needsMediaRescan(c,options.media));
+  if (!scanOnly && stale.length) {
+    for (const c of stale) c.selected = true;
+    render();
+    notice(mediaRescanHint);
+    return;
+  }
   if (!scanOnly && selected.every(c=>c.mediaSetting===options.media && c.state!=='pending') && !selected.some(c=>chosenFiles(c).length)) {
     notice('请先勾选至少一份课件；也可以重新扫描其他课节。'); return;
   }
@@ -439,6 +450,10 @@ $('start').addEventListener('click',()=>void run());
 $('scan').addEventListener('click',()=>void run(true));
 $('retry').addEventListener('click',()=>void run(false,true));
 $('clear-saved').addEventListener('click',()=>{
+  if (model.chapters.some(c=>c.selected && needsMediaRescan(c,$('media').checked))) {
+    notice(mediaRescanHint);
+    return;
+  }
   for (const c of model.chapters.filter(c=>c.selected)) {
     for (const file of chosenFiles(c)) {
       if (file.result !== 'saved') continue;
@@ -453,7 +468,11 @@ $('clear-saved').addEventListener('click',()=>{
 $('stop').addEventListener('click',()=>{model.cancelled=true; model.controller?.abort(); $('stop').disabled=true; for (const id of model.objectURLs.keys()) void chrome.downloads.cancel(id).catch(()=>{});});
 $('reload').addEventListener('click',()=>void init());
 $('search').addEventListener('input',render);
-for (const id of ['number','media','zip']) $(id).addEventListener('change',render);
+for (const id of ['number','zip']) $(id).addEventListener('change',render);
+$('media').addEventListener('change',()=>{
+  render();
+  if (model.chapters.some(c=>c.selected && needsMediaRescan(c,$('media').checked))) notice(mediaRescanHint);
+});
 $('all').addEventListener('change',()=>{for(const c of visibleChapters()) c.selected=$('all').checked; render();});
 $('invert').addEventListener('click',()=>{for(const c of visibleChapters()) c.selected=!c.selected; render();});
 $('has-files').addEventListener('click',()=>{for(const c of model.chapters) c.selected=c.files.length>0 && c.mediaSetting===$('media').checked; render();});
@@ -466,3 +485,4 @@ $('report').addEventListener('click',async()=>{
 });
 window.addEventListener('beforeunload',event=>{if(model.busy){event.preventDefault();event.returnValue='';}});
 void init();
+
