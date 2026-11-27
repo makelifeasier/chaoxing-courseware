@@ -3,6 +3,35 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import JSZip from 'jszip';
 import http from 'node:http';
+test('Media visibility does not rescan, and saved files can keep their original name',async()=>{
+  const {context,manager,worker,requests}=await setup();
+  try {
+    await context.route('**/knowledge/cards?**',async route=>{
+      const id=new URL(route.request().url()).searchParams.get('knowledgeid');
+      const attachments=[{type:'document',property:{objectid:'object_10000001',name:'原始名字.pdf'}},{type:'audio',property:{objectid:'audio_10000001',name:'录音.mp3'}}];
+      await route.fulfill({contentType:'text/html; charset=utf-8',body:`<div class="ans-cc"></div><script>mArg=${JSON.stringify({coursename:'测试课程',attachments})};</script>`});
+    });
+    await manager.getByRole('checkbox',{name:'1.1 集合',exact:true}).check();
+    await manager.locator('#scan').click();
+    await expect(manager.locator('#notice')).toContainText('扫描完成');
+    const audio=manager.getByRole('checkbox',{name:/录音.mp3/});
+    await expect(audio).toHaveCount(0);
+    const scanned=requests.filter(u=>u.includes('/studentstudyAjax')).length;
+    await manager.locator('#media').check();
+    await expect(audio).toBeVisible();
+    await expect(audio).not.toBeChecked();
+    await manager.getByRole('button',{name:'预览 录音.mp3',exact:true}).click();
+    await expect(manager.locator('#preview-content audio')).toHaveAttribute('src',/audio_10000001/);
+    await manager.getByRole('button',{name:'关闭',exact:true}).click();
+    await manager.getByRole('combobox',{name:'文件名方式 原始名字.pdf'}).selectOption('original');
+    await manager.locator('#zip').uncheck();
+    await manager.locator('#start').click();
+    await expect(manager.locator('#notice')).toContainText('下载完成');
+    expect(requests.filter(u=>u.includes('/studentstudyAjax'))).toHaveLength(scanned);
+    const saved=await worker.evaluate(()=>chrome.downloads.search({}));
+    expect(saved.map(item=>path.basename(item.filename))).toEqual(['原始名字.pdf']);
+  }finally{await context.close();}
+});
 test('Batch scan overlaps requests for different chapters',async()=>{
   const {context,manager}=await setup();
   let active=0, peak=0;
@@ -221,12 +250,7 @@ for (const browserName of ['chromium','edge']) test(`${browserName}: select one 
     const first=manager.getByRole('checkbox',{name:'1.3 映射 · 第1份 · 原文件0.pptx',exact:true});
     const second=manager.getByRole('checkbox',{name:'1.3 映射 · 第2份 · 原文件1.pptx',exact:true});
     await first.uncheck();await expect(second).toBeChecked();
-    const statusRequests = () => requests.filter(url=>url.includes('/ananas/status/')).length;
-    const beforeDownload = statusRequests();
     await manager.locator('#media').check();
-    await manager.locator('#start').click();
-    await expect(manager.locator('#notice')).toContainText('请重新扫描');
-    expect(statusRequests()).toBe(beforeDownload);
     await manager.locator('#scan').click();await expect(manager.locator('#notice')).toContainText('扫描完成');
     await expect(first).not.toBeChecked();await expect(second).toBeChecked();
     await manager.locator('#zip').uncheck();await manager.locator('#start').click();await expect(manager.locator('#notice')).toContainText('下载完成');

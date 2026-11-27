@@ -1,10 +1,24 @@
-import {allowedURL, resourceURL, safeName, outputName, uniqueName, parseCatalog, parseStudy, parseResources, resolveResource, chapterURL, assertCoursePage, mimeFor, sleep, MAX_FILE_BYTES} from './core.js';
+import {allowedURL, resourceURL, safeName, extensionOf, outputName, uniqueName, parseCatalog, parseStudy, parseResources, resolveResource, chapterURL, assertCoursePage, mimeFor, sleep, MAX_FILE_BYTES} from './core.js';
 
 const $ = id => document.getElementById(id);
 const model = { chapters: [], source: null, busy: false, cancelled: false, controller: null, records: [], failedIds: new Set(), used: new Set(), archive: null, archiveBytes: 0, archivePart: 0, saved: 0, discovered: 0, skipped: 0, errors: 0, scanErrors: new Set(), saveErrors: new Set(), objectURLs: new Map() };
 const ZIP_LIMIT = 200 * 1024 * 1024;
 const SCAN_CONCURRENCY = 6;
 const activeRequests = new Set();
+let renderTimer;
+let recentPreview;
+function scheduleScanRender() {
+  if (renderTimer) return;
+  renderTimer = setTimeout(()=>{renderTimer = null; render();},100);
+}
+function filenameFor(chapter, file, extension, index, includeNumber) {
+  if (file.nameMode === 'original' && file.name) {
+    const originalExt = extensionOf(file.name);
+    return safeName(originalExt ? file.name.slice(0,-originalExt.length) : file.name) + extension;
+  }
+  const title = (includeNumber && chapter.number ? chapter.number+' ' : '')+chapter.title;
+  return outputName({...chapter,title},extension,index,visibleFiles(chapter).length);
+}
 function abortRequests() {
   for (const controller of activeRequests) controller.abort();
 }
@@ -30,9 +44,10 @@ function chooseFile(chapter, file, selected) {
   if (chapter.state === 'done') chapter.state = 'ready';
   if (selected) chapter.selected = true;
 }
-function chosenFiles(chapter) { return chapter.files.filter(file=>file.selected !== false); }
+function visibleFiles(chapter) { return chapter.files.filter(file=>$('media').checked || !file.media); }
+function chosenFiles(chapter) { return visibleFiles(chapter).filter(file=>file.selected !== false); }
 function needsMediaRescan(chapter, includeMedia) {
-  return !chapter.containerOnly && chapter.mediaSetting !== undefined && chapter.mediaSetting !== includeMedia;
+  return !chapter.containerOnly && includeMedia && chapter.mediaSetting === false;
 }
 const mediaRescanHint = '音视频设置已更改。请重新扫描相关课节，确认清单后再下载。';
 function checkpoint() {
@@ -63,6 +78,7 @@ async function restore() {
     const {selected,files,mediaSetting,scanError,choices} = prior;
     Object.assign(c,{selected,files,mediaSetting,scanError,fileChoices:new Map(choices)});
     for (const file of files) {
+      if (file.media && !c.fileChoices.has(file.objectid)) file.selected = false;
       if (item?.state==='complete' && pending.keys.includes(fileKey(c,file))) file.result='saved';
     }
     c.state = scanError ? 'error' : files.length ? 'ready' : mediaSetting===undefined ? 'pending' : 'empty';
@@ -74,6 +90,7 @@ async function restore() {
 function render() {
   const fragment = document.createDocumentFragment();
   for (const c of visibleChapters()) {
+    const shownFiles = visibleFiles(c);
     const block = document.createElement('div'); block.className = 'chapter-block'; block.dataset.chapterId = c.id;
     const row = document.createElement('label'); row.className = 'chapter' + (c.group ? ' group' : '');
     const input = document.createElement('input'); input.type = 'checkbox'; input.checked = c.selected; input.disabled = model.busy; input.setAttribute('aria-label', `${c.number} ${c.title}`);
@@ -86,20 +103,20 @@ function render() {
     const num = document.createElement('span'); num.className = 'num'; num.textContent = c.number;
     title.append(num, document.createTextNode(c.title));
     const badge = document.createElement('span'); badge.className = 'badge ' + c.state;
-    badge.textContent = c.state === 'ready' ? `已选 ${chosenFiles(c).length}/${c.files.length} 份` : statusLabels[c.state];
+    badge.textContent = c.state === 'ready' ? `已选 ${chosenFiles(c).length}/${shownFiles.length} 份` : statusLabels[c.state];
     if (c.error) row.title = c.error;
     row.append(input, title, badge); block.append(row);
-    if (c.files.length) {
+    if (shownFiles.length) {
       const files = document.createElement('div'); files.className = 'file-list'; files.setAttribute('aria-label', `${c.number} ${c.title}的课件`);
       const tools = document.createElement('div'); tools.className = 'file-tools';
-      const count = document.createElement('span'); count.textContent = `${chosenFiles(c).length}/${c.files.length} 份已勾选`;
+      const count = document.createElement('span'); count.textContent = `${chosenFiles(c).length}/${shownFiles.length} 份已勾选`;
       tools.append(count);
       for (const [text, selected] of [['本节全选',true],['本节全不选',false]]) {
         const button = document.createElement('button'); button.className = 'quiet'; button.textContent = text; button.disabled = model.busy;
-        button.addEventListener('click',()=>{for (const file of c.files) chooseFile(c,file,selected); render();}); tools.append(button);
+        button.addEventListener('click',()=>{for (const file of shownFiles) chooseFile(c,file,selected); render();}); tools.append(button);
       }
       files.append(tools);
-      c.files.forEach((file,index)=>{
+      shownFiles.forEach((file,index)=>{
         const label = document.createElement('label'); label.className = 'file-row';
         const check = document.createElement('input'); check.type = 'checkbox'; check.checked = file.selected !== false; check.disabled = model.busy;
         const originalName = file.name || `课件 ${index+1}`;
@@ -108,8 +125,7 @@ function render() {
         const description = document.createElement('span'); description.className = 'file-description';
         const name = document.createElement('span'); name.textContent = `${index+1}. ${originalName}`;
         const target = document.createElement('small');
-        const namedChapter = {...c,title:($('number').checked && c.number ? c.number+' ' : '')+c.title};
-        target.textContent = '保存为：'+outputName(namedChapter,file.extension || '',index,c.files.length);
+        target.textContent = '保存为：'+filenameFor(c,file,file.extension || '',index,$('number').checked);
         description.append(name,target);
         if (file.result) {
           const result = document.createElement('small');
@@ -127,7 +143,17 @@ function render() {
         fileRow.className = 'file-row';
         label.className = 'file-row';
         label.append(check,description);
-        fileRow.append(label,preview);
+        const naming = document.createElement('select');
+        naming.setAttribute('aria-label','文件名方式 '+originalName);
+        naming.disabled = model.busy;
+        naming.append(new Option('章节名','chapter'),new Option('保留原名','original'));
+        naming.value = file.nameMode || 'chapter';
+        naming.addEventListener('change',()=>{
+          file.nameMode = naming.value;
+          target.textContent = '保存为：'+filenameFor(c,file,file.extension || '',index,$('number').checked);
+          checkpoint();
+        });
+        fileRow.append(label,naming,preview);
         files.append(fileRow);
       });
       block.append(files);
@@ -192,7 +218,7 @@ async function init() {
     await chrome.declarativeNetRequest.updateSessionRules({removeRuleIds:[tab.id + 1], addRules:[{
       id:tab.id + 1, priority:1,
       action:{type:'modifyHeaders',requestHeaders:[{header:'Referer',operation:'set',value:new URL(source.url).origin + '/'}]},
-      condition:{initiatorDomains:[chrome.runtime.id],tabIds:[tab.id],requestDomains:['chaoxing.com','chaoxing.com.cn','cldisk.com'],resourceTypes:['xmlhttprequest']}
+      condition:{initiatorDomains:[chrome.runtime.id],tabIds:[tab.id],requestDomains:['chaoxing.com','chaoxing.com.cn','cldisk.com'],resourceTypes:['xmlhttprequest','media','image']}
     }]});
     const page = new URL(source.url);
     const course = source.context.courseId || page.searchParams.get('courseId') || page.searchParams.get('courseid');
@@ -266,33 +292,47 @@ async function previewFile(chapter, file) {
   $('preview-status').textContent = '正在加载预览…';
   previewDialog.showModal();
   try {
+    const key = model.key+'|'+file.objectid;
+    if (recentPreview?.key === key) {
+      displayPreview(session,recentPreview.blob);
+      return;
+    }
     const endpoint = new URL('/ananas/status/'+encodeURIComponent(file.objectid)+'?flag=normal',model.source.url);
     const info = JSON.parse(await request(endpoint.href));
     if (session.closed) return;
     const extension = file.extension || '';
     const image = /^\.(png|jpe?g|gif|webp|bmp)$/.test(extension);
     if (info.status !== 'success') throw new Error('课件服务器暂未返回可用文件。');
+    if (file.media || image) {
+      const address = file.media && info.http ? resourceURL(info.http,model.source.url) : resolveResource(info,file,model.source.url).url;
+      const audio = file.media === 'audio' || /^\.(mp3|m4a|aac|wav|flac|ogg)$/.test(extension);
+      const viewer = document.createElement(image ? 'img' : audio ? 'audio' : 'video');
+      if (image) viewer.alt = $('preview-title').textContent;
+      else { viewer.controls = true; viewer.preload = 'metadata'; }
+      viewer.addEventListener('error',()=>{ if (!session.closed) $('preview-status').textContent = '这个文件暂时无法在浏览器中预览。'; });
+      viewer.addEventListener(image ? 'load' : 'loadedmetadata',()=>{ if (!session.closed) $('preview-status').textContent = ''; });
+      $('preview-status').textContent = image ? '正在加载图片…' : '可点击播放器开始预览。';
+      $('preview-content').replaceChildren(viewer);
+      viewer.src = address;
+      return;
+    }
     let url, type;
-    if (!image && info.pdf) {
+    if (info.pdf) {
       url = resourceURL(info.pdf,model.source.url);
       type = 'application/pdf';
-    } else if (image || extension === '.pdf') {
+    } else if (extension === '.pdf') {
       url = resolveResource(info,file,model.source.url).url;
-      type = image ? (extension === '.gif' ? 'image/gif' : extension === '.webp' ? 'image/webp' : extension === '.bmp' ? 'image/bmp' : mimeFor(extension)) : 'application/pdf';
+      type = 'application/pdf';
     } else {
       $('preview-status').textContent = '原站未提供可预览的版本。你仍可根据文件名决定是否下载。';
       return;
     }
     const bytes = await request(url,true);
     if (session.closed) return;
-    if (!image && new TextDecoder().decode(bytes.subarray(0,5)) !== '%PDF-') throw new Error('服务器未返回 PDF 预览。');
-    session.url = URL.createObjectURL(new Blob([bytes],{type}));
-    const viewer = document.createElement(image ? 'img' : 'iframe');
-    if (image) viewer.alt = $('preview-title').textContent;
-    else viewer.title = 'PDF 课件预览';
-    viewer.src = session.url;
-    $('preview-content').replaceChildren(viewer);
-    $('preview-status').textContent = '';
+    if (new TextDecoder().decode(bytes.subarray(0,5)) !== '%PDF-') throw new Error('服务器未返回 PDF 预览。');
+    const blob = new Blob([bytes],{type});
+    if (blob.size <= 32*1024*1024) recentPreview = {key,blob};
+    displayPreview(session,blob);
   } catch (error) {
     if (!session.closed) $('preview-status').textContent = '无法预览。'+error.message;
   } finally {
@@ -300,12 +340,22 @@ async function previewFile(chapter, file) {
     if (session.closed) { previewSession = null; model.cancelled = false; }
   }
 }
+function displayPreview(session, blob) {
+  session.url = URL.createObjectURL(blob);
+  const viewer = document.createElement('iframe');
+  viewer.title = 'PDF 课件预览';
+  viewer.src = session.url;
+  $('preview-content').replaceChildren(viewer);
+  $('preview-status').textContent = '';
+}
 previewDialog.addEventListener('close',()=>{
   const session = previewSession;
   if (!session) return;
   session.closed = true;
   if (!session.finished) { model.cancelled = true; abortRequests(); }
   else previewSession = null;
+  const player = $('preview-content').querySelector('audio,video');
+  if (player) { player.pause(); player.removeAttribute('src'); player.load(); }
   $('preview-content').replaceChildren();
   if (session.url) URL.revokeObjectURL(session.url);
 });
@@ -314,11 +364,11 @@ $('preview-choice').addEventListener('change',()=>{
   chooseFile(previewSession.chapter,previewSession.file,$('preview-choice').checked);
   render();
 });
-async function scanChapter(c, includeMedia) {
-  c.state = 'working'; c.error = ''; render();
+async function scanChapter(c) {
+  c.state = 'working'; c.error = ''; scheduleScanRender();
   if (c.containerOnly) {
-    c.files = []; c.state = 'empty'; c.mediaSetting = includeMedia;
-    log(`${c.number} ${c.title}：目录标题，自动跳过`); render(); return;
+    c.files = []; c.state = 'empty'; c.mediaSetting = 'all';
+    log(`${c.number} ${c.title}：目录标题，自动跳过`); return;
   }
   const study = chapterURL(model.source,c.id);
   const doc = parseHTML(await request(study));
@@ -327,22 +377,28 @@ async function scanChapter(c, includeMedia) {
   if (!doc.querySelector('iframe[src*="/knowledge/cards"]')) throw new Error('章节接口未返回课件卡片，请在课程页检查章节是否已开放');
   const cardURLs = parseStudy(doc, study, c.id);
   const found = new Map();
-  for (const url of cardURLs) {
-    checkStopped();
-    const card = parseHTML(await request(url)); assertCoursePage(card);
-    if (!card.querySelector('.ans-cc, iframe[objectid]') && ![...card.scripts].some(s=>/mArg\s*=\s*\{/.test(s.textContent))) throw new Error('卡片内容无法识别，已标记为失败而非空章节');
-    for (const file of parseResources(card, includeMedia)) found.set(file.objectid,file);
+  for (let start=0; start<cardURLs.length; start+=2) {
+    const batch = await Promise.allSettled(cardURLs.slice(start,start+2).map(async url=>{
+      const card = parseHTML(await request(url));
+      assertCoursePage(card);
+      if (!card.querySelector('.ans-cc, iframe[objectid]') && ![...card.scripts].some(s=>/mArg\s*=\s*\{/.test(s.textContent))) throw new Error('卡片内容无法识别');
+      return parseResources(card,true);
+    }));
+    for (const result of batch) {
+      if (result.status === 'rejected') throw result.reason;
+      for (const file of result.value) found.set(file.objectid,file);
+    }
   }
   c.fileChoices ||= new Map();
   const previous = new Map(c.files.map(file=>[file.objectid,file]));
   c.files = [...found.values()].map(file=>{
     const prior = previous.get(file.objectid);
-    return {...file,selected:c.fileChoices.get(file.objectid) ?? true,result:prior?.result,error:prior?.error};
+    return {...file,selected:c.fileChoices.get(file.objectid) ?? !file.media,nameMode:prior?.nameMode,result:prior?.result,error:prior?.error};
   });
   c.scanError = '';
-  c.state = c.files.length ? 'ready' : 'empty'; c.mediaSetting = includeMedia;
+  c.state = c.files.length ? 'ready' : 'empty'; c.mediaSetting = 'all';
   log(`${c.number} ${c.title}：${c.files.length ? `识别到 ${c.files.length} 份课件` : '没有课件，自动跳过'}`);
-  render();
+  scheduleScanRender();
 }
 
 async function saveBlob(blob, filename, keys = []) {
@@ -394,21 +450,21 @@ async function flushArchive() {
 }
 async function downloadChapter(c, options) {
   let failures = 0;
-  for (let i = 0; i < c.files.length; i++) {
+  const files = visibleFiles(c);
+  for (let i = 0; i < files.length; i++) {
     checkStopped();
-    const resource = c.files[i];
+    const resource = files[i];
     if (resource.selected === false) continue;
     if (resource.result === 'saved' || (options.retry && resource.result !== 'failed')) continue;
     try {
-      $('transfer').textContent = `解析课件：${c.title}（${i+1}/${c.files.length}）`;
+      $('transfer').textContent = `解析课件：${c.title}（${i+1}/${files.length}）`;
       const endpoint = new URL(`/ananas/status/${encodeURIComponent(resource.objectid)}?flag=normal`, model.source.url);
       let info;
       try { info = JSON.parse(await request(endpoint.href)); }
       catch (e) { if (e.name === 'AbortError') throw e; throw new Error('资源接口未返回有效信息，请检查课程登录状态及资源权限'); }
       const resolved = resolveResource(info, resource, model.source.url);
       const data = await request(resolved.url,true);
-      const namedChapter = {...c,title:(options.number && c.number ? c.number + ' ' : '') + c.title};
-      const filename = uniqueName(outputName(namedChapter,resolved.extension,i,c.files.length),model.used);
+      const filename = uniqueName(filenameFor(c,resource,resolved.extension,i,options.number),model.used);
       if (options.zip) {
         if (model.archiveBytes && model.archiveBytes + data.byteLength > ZIP_LIMIT) {
           try { await flushArchive(); }
@@ -478,7 +534,7 @@ async function run(scanOnly = false, retry = false) {
     notice(mediaRescanHint);
     return;
   }
-  if (!scanOnly && selected.every(c=>c.mediaSetting===options.media && c.state!=='pending') && !selected.some(c=>chosenFiles(c).length)) {
+  if (!scanOnly && selected.every(c=>c.mediaSetting!==undefined && c.state!=='pending') && !selected.some(c=>chosenFiles(c).length)) {
     notice('请先勾选至少一份课件；也可以重新扫描其他课节。'); return;
   }
   model.busy = true; model.cancelled = false; model.saved = 0; model.skipped = 0; model.errors = 0;
@@ -493,9 +549,9 @@ async function run(scanOnly = false, retry = false) {
       checkStopped();
       try {
         const needsScan = c.mediaSetting === undefined;
-        if (scanOnly || needsScan) await scanChapter(c,options.media);
+        if (scanOnly || needsScan) await scanChapter(c);
         else c.scanError = '';
-        if (!c.files.length) model.skipped++;
+        if (!visibleFiles(c).length) model.skipped++;
         else if (!scanOnly && !chosenFiles(c).length) {model.skipped++; log(`${c.number} ${c.title}：未勾选课件，跳过下载`);}
         else if (!scanOnly) { if (options.zip) zipChapters.add(c); await downloadChapter(c,{...options,retry:retry && !needsScan}); }
       } catch (e) {
@@ -503,7 +559,7 @@ async function run(scanOnly = false, retry = false) {
         c.state = 'error'; c.error = e.message; c.scanError = e.message; model.errors++; model.failedIds.add(c.id); model.scanErrors.add(c.id);
         log(`${c.number} ${c.title}：${e.message}`,true);
       }
-      completed++; updateProgress(completed,selected.length); render();
+      completed++; updateProgress(completed,selected.length); scheduleScanRender();
     };
     if (scanOnly) {
       let next = 0;
@@ -535,6 +591,7 @@ async function run(scanOnly = false, retry = false) {
     notice(e.name === 'AbortError' ? '任务已停止。已保存的文件保留；当前未保存的 ZIP 内容已放弃，请重新下载需要的章节。' : e.message,true);
     log(e.name === 'AbortError' ? '用户停止了任务。' : e.message,true);
   } finally {
+    clearTimeout(renderTimer); renderTimer = null;
     model.archive = null; model.archiveBytes = 0; model.busy = false;
     $('transfer').textContent = ''; updateProgress(completed,selected.length); render();
   }
@@ -569,7 +626,7 @@ $('media').addEventListener('change',()=>{
 });
 $('all').addEventListener('change',()=>{for(const c of visibleChapters()) c.selected=$('all').checked; render();});
 $('invert').addEventListener('click',()=>{for(const c of visibleChapters()) c.selected=!c.selected; render();});
-$('has-files').addEventListener('click',()=>{for(const c of model.chapters) c.selected=c.files.length>0 && c.mediaSetting===$('media').checked; render();});
+$('has-files').addEventListener('click',()=>{for(const c of model.chapters) c.selected=visibleFiles(c).length>0; render();});
 $('downloads').addEventListener('click',()=>chrome.tabs.create({url:'chrome://downloads/'}));
 $('report').addEventListener('click',async()=>{
   try {

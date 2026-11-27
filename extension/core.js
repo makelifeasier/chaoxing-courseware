@@ -132,7 +132,9 @@ export function parseResources(doc, includeMedia = false) {
     const isMedia = /^(video|audio)$/i.test(type) || /^\.(mp4|mp3|m4a|flv|m3u8|wav|webm|mov|avi)$/i.test(ext) || /video|audio/i.test(p.module || '');
     if (!includeMedia && isMedia) return;
     if (!isMedia && !/document|file|download|insertdoc|insertfile|pdf/i.test(type + ' ' + (p.module || '')) && !/^\.(pdf|pptx?|docx?|xlsx?|txt|rtf|csv|zip|rar|7z|jpg|jpeg|png|epub|wps|et|dps)$/i.test(ext)) return;
-    resources.set(id, { objectid: id, name, extension: ext, media: isMedia });
+    const media = isMedia ? (/audio/i.test(type+' '+(p.module || '')) || /^\.(mp3|m4a|aac|wav|ogg|flac)$/.test(ext) ? 'audio' : 'video') : false;
+    const prior = resources.get(id);
+    resources.set(id, { objectid: id, name: name || prior?.name || '', extension: ext || prior?.extension || '', media: media || prior?.media || false });
   };
   for (const script of doc.querySelectorAll('script')) {
     const data = jsonAssignment(script.textContent);
