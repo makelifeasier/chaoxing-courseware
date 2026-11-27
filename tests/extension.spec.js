@@ -3,6 +3,24 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import JSZip from 'jszip';
 import http from 'node:http';
+test('Preview lets the user remove a PDF from the download selection',async()=>{
+  const {context,manager,worker}=await setup();
+  try {
+    await manager.getByRole('checkbox',{name:'1.1 集合',exact:true}).check();
+    await manager.locator('#scan').click();
+    await expect(manager.locator('#notice')).toContainText('扫描完成');
+    await manager.getByRole('button',{name:'预览 原始名字.pdf'}).click();
+    await expect(manager.locator('#preview-content iframe')).toHaveAttribute('src',/^blob:/);
+    await manager.locator('#preview-choice').uncheck();
+    await manager.getByRole('button',{name:'关闭',exact:true}).click();
+    await expect(manager.getByRole('checkbox',{name:/第1份 · 原始名字/})).not.toBeChecked();
+    expect(await worker.evaluate(()=>chrome.downloads.search({}))).toHaveLength(0);
+    await context.route('https://raw.githubusercontent.com/**',route=>route.fulfill({json:{version:'9.0.0'}}));
+    await manager.locator('#check-update').click();
+    await expect(manager.locator('#update-status')).toContainText('有新版本 v9.0.0');
+    await expect(manager.locator('#update-link')).toBeVisible();
+  }finally{await context.close();}
+});
 test('Restored manifest downloads only the outstanding file in a ZIP supplement',async()=>{
   const failure={id:'mapping_1'};
   const {context,manager,worker,requests}=await setup('chromium',failure);
@@ -218,5 +236,4 @@ test('Per-chapter select all/none controls and no-file selection do not trigger 
     await block.getByRole('button',{name:'本节全不选',exact:true}).click();await expect(files.nth(0)).not.toBeChecked();await expect(files.nth(1)).not.toBeChecked();
   } finally {await context.close();}
 });
-
 

@@ -30,5 +30,18 @@
   </div>
   <section class="panel log-panel"><h2>任务记录</h2><ol id="log" aria-live="polite"><li>准备就绪后，勾选课节并开始下载。</li></ol></section>
 </main>
-<script src="vendor/jszip.min.js"></script><script type="module" src="manager.js"></script>
+<footer class="footnote project-footer">
+  <span id="extension-version"></span> · <a href="https://github.com/makelifeasier/chaoxing-courseware" target="_blank" rel="noopener noreferrer">项目主页</a> ·
+  <a href="https://github.com/KenXK/ChaoxingDownload_FusionEdition" target="_blank" rel="noopener noreferrer">实现参考</a> ·
+  <button id="check-update" class="quiet" type="button">检查更新</button>
+  <span id="update-status" role="status"></span>
+  <a id="update-link" href="https://github.com/makelifeasier/chaoxing-courseware#安装" target="_blank" rel="noopener noreferrer" hidden>查看更新与安装方法</a>
+</footer>
+<dialog id="file-preview" aria-labelledby="preview-title">
+  <div class="section-head"><h2 id="preview-title">课件预览</h2><form method="dialog"><button>关闭</button></form></div>
+  <p id="preview-status" role="status"></p>
+  <div id="preview-content"></div>
+  <label><input id="preview-choice" type="checkbox"> 下载这份课件</label>
+</dialog>
+<script src="vendor/jszip.min.js"></script><script type="module" src="manager.js"></script><script type="module" src="updates.js"></script>
 </body></html>

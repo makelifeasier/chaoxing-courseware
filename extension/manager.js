@@ -111,7 +111,19 @@ function render() {
           result.textContent = file.result==='saved' ? '已保存' : '失败 · '+file.error;
           description.append(result);
         }
-        label.append(check,description); files.append(label);
+        const preview = document.createElement('button');
+        preview.type = 'button';
+        preview.className = 'quiet preview-button';
+        preview.textContent = '预览';
+        preview.disabled = model.busy;
+        preview.setAttribute('aria-label', '预览 '+originalName);
+        preview.addEventListener('click',()=>void previewFile(c,file));
+        const fileRow = document.createElement('div');
+        fileRow.className = 'file-row';
+        label.className = 'file-row';
+        label.append(check,description);
+        fileRow.append(label,preview);
+        files.append(fileRow);
       });
       block.append(files);
     }
@@ -234,6 +246,67 @@ async function request(url, binary = false) {
   }
   throw lastError;
 }
+
+const previewDialog = $('file-preview');
+let previewSession;
+async function previewFile(chapter, file) {
+  if (previewSession || model.busy) return;
+  model.cancelled = false;
+  const session = {chapter,file};
+  previewSession = session;
+  $('preview-title').textContent = file.name || chapter.title;
+  $('preview-choice').checked = file.selected !== false;
+  $('preview-status').textContent = '正在加载预览…';
+  previewDialog.showModal();
+  try {
+    const endpoint = new URL('/ananas/status/'+encodeURIComponent(file.objectid)+'?flag=normal',model.source.url);
+    const info = JSON.parse(await request(endpoint.href));
+    if (session.closed) return;
+    const extension = file.extension || '';
+    const image = /^\.(png|jpe?g|gif|webp|bmp)$/.test(extension);
+    if (info.status !== 'success') throw new Error('课件服务器暂未返回可用文件。');
+    let url, type;
+    if (!image && info.pdf) {
+      url = resourceURL(info.pdf,model.source.url);
+      type = 'application/pdf';
+    } else if (image || extension === '.pdf') {
+      url = resolveResource(info,file,model.source.url).url;
+      type = image ? (extension === '.gif' ? 'image/gif' : extension === '.webp' ? 'image/webp' : extension === '.bmp' ? 'image/bmp' : mimeFor(extension)) : 'application/pdf';
+    } else {
+      $('preview-status').textContent = '原站未提供可预览的版本。你仍可根据文件名决定是否下载。';
+      return;
+    }
+    const bytes = await request(url,true);
+    if (session.closed) return;
+    if (!image && new TextDecoder().decode(bytes.subarray(0,5)) !== '%PDF-') throw new Error('服务器未返回 PDF 预览。');
+    session.url = URL.createObjectURL(new Blob([bytes],{type}));
+    const viewer = document.createElement(image ? 'img' : 'iframe');
+    if (image) viewer.alt = $('preview-title').textContent;
+    else viewer.title = 'PDF 课件预览';
+    viewer.src = session.url;
+    $('preview-content').replaceChildren(viewer);
+    $('preview-status').textContent = '';
+  } catch (error) {
+    if (!session.closed) $('preview-status').textContent = '无法预览。'+error.message;
+  } finally {
+    session.finished = true;
+    if (session.closed) { previewSession = null; model.cancelled = false; }
+  }
+}
+previewDialog.addEventListener('close',()=>{
+  const session = previewSession;
+  if (!session) return;
+  session.closed = true;
+  if (!session.finished) { model.cancelled = true; model.controller?.abort(); }
+  else previewSession = null;
+  $('preview-content').replaceChildren();
+  if (session.url) URL.revokeObjectURL(session.url);
+});
+$('preview-choice').addEventListener('change',()=>{
+  if (!previewSession) return;
+  chooseFile(previewSession.chapter,previewSession.file,$('preview-choice').checked);
+  render();
+});
 async function scanChapter(c, includeMedia) {
   c.state = 'working'; c.error = ''; render();
   if (c.containerOnly) {
@@ -372,7 +445,7 @@ function markArchiveFailed(error) {
   log('ZIP 保存失败 · '+error.message,true);
 }
 async function run(scanOnly = false, retry = false) {
-  if (model.busy || !model.loaded || model.reconciling) return;
+  if (model.busy || !model.loaded || model.reconciling || previewSession) return;
   if (model.pending) {
     model.reconciling = true;
     const pending = model.pending;
@@ -485,4 +558,3 @@ $('report').addEventListener('click',async()=>{
 });
 window.addEventListener('beforeunload',event=>{if(model.busy){event.preventDefault();event.returnValue='';}});
 void init();
-
