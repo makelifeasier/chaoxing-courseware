@@ -183,6 +183,12 @@ for (const browserName of ['chromium','edge']) test(`${browserName}: select one 
     const first=manager.getByRole('checkbox',{name:'1.3 映射 · 第1份 · 原文件0.pptx',exact:true});
     const second=manager.getByRole('checkbox',{name:'1.3 映射 · 第2份 · 原文件1.pptx',exact:true});
     await first.uncheck();await expect(second).toBeChecked();
+    const statusRequests = () => requests.filter(url=>url.includes('/ananas/status/')).length;
+    const beforeDownload = statusRequests();
+    await manager.locator('#media').check();
+    await manager.locator('#start').click();
+    await expect(manager.locator('#notice')).toContainText('请重新扫描');
+    expect(statusRequests()).toBe(beforeDownload);
     await manager.locator('#scan').click();await expect(manager.locator('#notice')).toContainText('扫描完成');
     await expect(first).not.toBeChecked();await expect(second).toBeChecked();
     await manager.locator('#zip').uncheck();await manager.locator('#start').click();await expect(manager.locator('#notice')).toContainText('下载完成');
@@ -212,4 +218,5 @@ test('Per-chapter select all/none controls and no-file selection do not trigger 
     await block.getByRole('button',{name:'本节全不选',exact:true}).click();await expect(files.nth(0)).not.toBeChecked();await expect(files.nth(1)).not.toBeChecked();
   } finally {await context.close();}
 });
+
 
