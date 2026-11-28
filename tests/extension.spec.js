@@ -4,16 +4,16 @@ import path from 'node:path';
 import JSZip from 'jszip';
 import http from 'node:http';
 test('Cached scans reuse results and ZIP can split PDF from video',async()=>{
-  const {context,manager,worker,requests}=await setup();
+  const {context,manager,worker,requests}=await setup('chromium',{chapterTitle:'集合（视频）'});
   try {
     await context.route('**/knowledge/cards?**',route=>{
       const attachments=[
         {type:'document',property:{objectid:'object_10000001',name:'讲义.pdf'}},
-        {type:'video',property:{objectid:'video_10000001',name:'例题（视频）.mp4'}}
+        {type:'video',property:{objectid:'video_10000001',name:'例题【视频】.mp4 视频'}}
       ];
       return route.fulfill({contentType:'text/html; charset=utf-8',body:`<div class="ans-cc"></div><script>mArg=${JSON.stringify({attachments})};</script>`});
     });
-    await manager.getByRole('checkbox',{name:'1.1 集合',exact:true}).check();
+    await manager.getByRole('checkbox',{name:'1.1 集合（视频）',exact:true}).check();
     const scans=()=>requests.filter(url=>url.includes('/studentstudyAjax')).length;
     await manager.locator('#scan').click();
     await expect(manager.locator('#notice')).toContainText('扫描完成');
@@ -27,6 +27,10 @@ test('Cached scans reuse results and ZIP can split PDF from video',async()=>{
     await manager.locator('#media').check();
     const video=manager.getByRole('checkbox',{name:/例题\.mp4/});
     await expect(video).not.toBeChecked();
+    await expect(manager.getByText('保存为：集合（2）.mp4',{exact:true})).toBeVisible();
+    await manager.getByRole('button',{name:'预览 例题.mp4',exact:true}).click();
+    await expect(manager.locator('#preview-title')).toHaveText('例题.mp4');
+    await manager.getByRole('button',{name:'关闭',exact:true}).click();
     await video.check();
     const group=manager.getByRole('group',{name:'文件名方式 例题.mp4'});
     await group.getByRole('button',{name:'原名',exact:true}).click();
@@ -36,7 +40,7 @@ test('Cached scans reuse results and ZIP can split PDF from video',async()=>{
     await expect(manager.locator('#notice')).toContainText('下载完成');
     const saved=await worker.evaluate(()=>chrome.downloads.search({}));
     expect(saved).toHaveLength(2);
-    for (const [type,filename] of [['PDF','集合（1）.pdf'],['音视频','例题.mp4']]) {
+    for (const [type,filename] of [['PDF','集合（视频）（1）.pdf'],['音视频','例题.mp4']]) {
       const item=saved.find(file=>file.filename.includes('_'+type+'_'));
       expect(item).toBeTruthy();
       const zip=await JSZip.loadAsync(await fs.readFile(item.filename),{checkCRC32:true});
@@ -161,7 +165,10 @@ async function setup(browserName='chromium',failure={}){
     if(u.pathname.endsWith('/studentstudyAjax')) return route.fulfill({contentType:'text/html; charset=utf-8',body:fragment(u.searchParams.get('chapterId'))});
     if(u.pathname.endsWith('/studentstudy')) {
       if(u.searchParams.get('chapterId')!=='10000001') return route.fulfill({status:403,body:'signature does not match changed chapter'});
-      return route.fulfill({contentType:'text/html; charset=utf-8',body:study(u.searchParams.get('chapterId'))});
+      const html=study(u.searchParams.get('chapterId'));
+      const body=failure.chapterTitle ? html.replace('title="集合"', `title="${failure.chapterTitle}"`)
+        .replace('>集合</span>',`>${failure.chapterTitle}</span>`) : html;
+      return route.fulfill({contentType:'text/html; charset=utf-8',body});
     }
     if(u.pathname.includes('/knowledge/cards'))return route.fulfill({contentType:'text/html; charset=utf-8',body:failure.card===u.searchParams.get('knowledgeid')?'<html><input type="password"></html>':card(u.searchParams.get('knowledgeid'),u.searchParams.get('num'))});
     if(u.pathname.includes('/ananas/status/')){

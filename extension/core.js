@@ -25,6 +25,18 @@ export function extensionOf(name) {
   const match = String(name || '').match(/\.([a-z\d]{1,10})$/i);
   return match ? '.' + match[1].toLowerCase() : '';
 }
+export function stripVideoLabel(name) {
+  return String(name || '').replace(
+    /(?:[\s._·:：\-－–—]*(?:[（(【\[［]\s*视频\s*[）)】\]］]|视频))+\s*$/u, ''
+  ).trim();
+}
+export function videoDisplayName(name) {
+  if (!name) return '';
+  const title = stripVideoLabel(name);
+  const extension = extensionOf(title);
+  const stem = extension ? title.slice(0, -extension.length) : title;
+  return (stripVideoLabel(stem) || '课件') + (extension ? title.slice(-extension.length) : '');
+}
 export function mimeFor(extension) {
   return ({'.pdf':'application/pdf','.ppt':'application/vnd.ms-powerpoint','.pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation','.doc':'application/msword','.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.xls':'application/vnd.ms-excel','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.zip':'application/zip','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.mp4':'video/mp4','.mp3':'audio/mpeg','.txt':'text/plain'})[extension] || 'application/octet-stream';
 }
@@ -124,12 +136,16 @@ export function parseStudy(doc, base, chapterId, template) {
 }
 export function parseResources(doc, includeMedia = false) {
   const resources = new Map();
+  const mediaExtension = /^\.(mp4|mp3|m4a|flv|m3u8|wav|webm|mov|avi)$/i;
   const add = (p, type = '') => {
     const id = String(p.objectid || p.objectId || '');
     if (!/^[a-z\d_-]{8,128}$/i.test(id)) return;
     const name = p.name || p.filename || '';
-    const ext = extensionOf(name) || (/^\.[a-z\d]+$/i.test(p.type || '') ? p.type.toLowerCase() : '');
-    const isMedia = /^(video|audio)$/i.test(type) || /^\.(mp4|mp3|m4a|flv|m3u8|wav|webm|mov|avi)$/i.test(ext) || /video|audio/i.test(p.module || '');
+    const givenExtension = extensionOf(String(name).trim());
+    const taggedExtension = givenExtension ? '' : extensionOf(stripVideoLabel(name));
+    const ext = givenExtension || (mediaExtension.test(taggedExtension) ? taggedExtension : '') ||
+      (/^\.[a-z\d]+$/i.test(p.type || '') ? p.type.toLowerCase() : '');
+    const isMedia = /^(video|audio)$/i.test(type) || mediaExtension.test(ext) || /video|audio/i.test(p.module || '');
     if (!includeMedia && isMedia) return;
     if (!isMedia && !/document|file|download|insertdoc|insertfile|pdf/i.test(type + ' ' + (p.module || '')) && !/^\.(pdf|pptx?|docx?|xlsx?|txt|rtf|csv|zip|rar|7z|jpg|jpeg|png|epub|wps|et|dps)$/i.test(ext)) return;
     const media = isMedia ? (/audio/i.test(type+' '+(p.module || '')) || /^\.(mp3|m4a|aac|wav|ogg|flac)$/.test(ext) ? 'audio' : 'video') : false;

@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
-import {allowedURL,resourceURL,safeName,uniqueName,jsonAssignment,parseCatalog,parseStudy,parseResources,resolveResource,outputName,chapterURL,assertCoursePage} from '../extension/core.js';
+import {allowedURL,resourceURL,safeName,uniqueName,jsonAssignment,parseCatalog,parseStudy,parseResources,resolveResource,outputName,chapterURL,assertCoursePage,videoDisplayName} from '../extension/core.js';
 const doc = text => new JSDOM(text).window.document;
 const origin='https://mooc1.chaoxing.com';
 test('only exact authorized domains and HTTP(S), reject credentials / tricks',()=>{
@@ -34,6 +34,16 @@ test('deduplicates iframe and mArg metadata, excludes videos and tests by defaul
   const d=doc(`<script>mArg={"attachments":[{"type":"document","property":{"objectid":"abc12345","name":"集合(6).pdf"}},{"type":"video","property":{"objectid":"video123","name":"视频.mp4"}}]};</script><iframe objectid="abc12345" data='{"name":"集合(6).pdf"}'></iframe>`);
   assert.equal(parseResources(d).length,1); assert.equal(parseResources(d,true).length,2);
   assert.equal(parseResources(doc('<script>mArg={"attachments":[]};</script>')).length,0);
+});
+test('video names lose trailing type labels while retaining the actual title and extension',()=>{
+  for (const name of ['例题视频.mp4','例题－视频.mp4','例题【视频】.mp4（视频）','例题.mp4 视频','例题_视频（视频）.mp4']) {
+    assert.equal(videoDisplayName(name),'例题.mp4',name);
+  }
+  assert.equal(videoDisplayName('教学视频制作.MP4'),'教学视频制作.MP4');
+  assert.equal(videoDisplayName('视频.mp4'),'课件.mp4');
+  const [file] = parseResources(doc('<script>mArg={"attachments":[{"type":"video","property":{"objectid":"video123","name":"例题.mp4 【视频】"}}]};</script>'),true);
+  assert.equal(file.extension,'.mp4');
+  assert.equal(file.media,'video');
 });
 test('prefer original office file and match PDF fallback extension',()=>{
   assert.deepEqual(resolveResource({status:'success',download:origin+'/original',pdf:origin+'/pdf'},{extension:'.pptx'},origin),{url:origin+'/original',extension:'.pptx'});

@@ -1,4 +1,4 @@
-import {allowedURL, resourceURL, safeName, extensionOf, outputName, uniqueName, parseCatalog, parseStudy, parseResources, resolveResource, chapterURL, assertCoursePage, mimeFor, sleep, MAX_FILE_BYTES} from './core.js';
+import {allowedURL, resourceURL, safeName, extensionOf, stripVideoLabel, videoDisplayName, outputName, uniqueName, parseCatalog, parseStudy, parseResources, resolveResource, chapterURL, assertCoursePage, mimeFor, sleep, MAX_FILE_BYTES} from './core.js';
 
 const $ = id => document.getElementById(id);
 const model = { chapters: [], source: null, busy: false, cancelled: false, controller: null, records: [], failedIds: new Set(), used: new Set(), archive: null, archiveBytes: 0, archivePart: 0, saved: 0, discovered: 0, skipped: 0, errors: 0, scanErrors: new Set(), saveErrors: new Set(), objectURLs: new Map() };
@@ -17,15 +17,12 @@ function filenameFor(chapter, file, extension, index, includeNumber) {
     const originalExt = extensionOf(original);
     return safeName(originalExt ? original.slice(0,-originalExt.length) : original) + extension;
   }
-  const title = (includeNumber && chapter.number ? chapter.number+' ' : '')+chapter.title;
+  const chapterName = file.media === 'video' ? stripVideoLabel(chapter.title) || '课件' : chapter.title;
+  const title = (includeNumber && chapter.number ? chapter.number+' ' : '')+chapterName;
   return outputName({...chapter,title},extension,index,visibleFiles(chapter).length);
 }
 function displayName(file) {
-  if (file.media !== 'video' || !file.name) return file.name;
-  const ext = extensionOf(file.name);
-  const stem = ext ? file.name.slice(0,-ext.length) : file.name;
-  const cleaned = stem.replace(/\s*[（(]?\s*视频\s*[）)]?\s*$/,'').trim();
-  return cleaned ? cleaned + (ext ? file.name.slice(-ext.length) : '') : file.name;
+  return file.media === 'video' ? videoDisplayName(file.name) : file.name;
 }
 function abortRequests() {
   for (const controller of activeRequests) controller.abort();

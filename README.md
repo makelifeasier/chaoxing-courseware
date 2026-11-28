@@ -1,6 +1,6 @@
-# 超星课件下载
+# 超星课件下载浏览器扩展
 
-在学习通打开课程，勾选几节课，就能把需要的课件一次下载。支持 Chrome 和 Edge。
+适用于 Chrome 和 Microsoft Edge。在学习通打开课程，勾选需要的课节，即可批量下载课件。
 
 [下载 Windows 安装器](https://github.com/makelifeasier/chaoxing-courseware/raw/refs/heads/main/installer/ChaoxingCoursewareSetup.exe) · [下载 ZIP](https://github.com/makelifeasier/chaoxing-courseware/archive/refs/heads/main.zip) · [安装步骤](#安装)
 
@@ -29,7 +29,7 @@
 
 安装器无需管理员权限，扩展保存到当前用户的应用数据目录。安装器暂未签名。可查看 [安装器源码](installer/Program.cs)、[浏览器引导源码](installer/BrowserGuide.cs) 和 [构建脚本](installer/build.ps1)。
 
-SHA-256：`BCA96ECD8E31248D1AE3F8167E9DA69635CD561B925AB61194496C188B9475E6`
+SHA-256：`C46DA64E063E617990DF7E78F6CC369744D0C58B66ADACC52E51121F991014D8`
 
 **ZIP 手动安装**
 
