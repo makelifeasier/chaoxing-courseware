@@ -59,14 +59,14 @@ internal static class BrowserGuide
         }
     }
 
-    internal static ProcessStartInfo NewWindow(string exe)
+    internal static ProcessStartInfo NewWindow(string exe, string page)
     {
-        return new ProcessStartInfo(exe, "--new-window about:blank") { UseShellExecute = false };
+        return new ProcessStartInfo(exe, "--new-window " + page) { UseShellExecute = false };
     }
 
     internal static Attempt Open(ProcessStartInfo start, string page, string folder,
         Action<bool> developerModeGuide = null, CancellationToken cancellation = default(CancellationToken),
-        int developerModeWait = 90000)
+        int developerModeWait = 90000, Action openPageGuide = null)
     {
         var result = Result.OpenFailed;
         var window = IntPtr.Zero;
@@ -82,7 +82,7 @@ internal static class BrowserGuide
             IntPtr editedWindow = IntPtr.Zero;
             var addressChanged = Stopwatch.StartNew();
             int navigations = 0;
-            if (!WaitFor(() =>
+            var pageReady = WaitFor(() =>
             {
                 var candidates = BrowserWindows(start.FileName);
                 candidates.ExceptWith(existing);
@@ -117,7 +117,7 @@ internal static class BrowserGuide
                     }
                     return false;
                 }
-                // Start from a known blank window, then navigate its address bar.
+                // Some launches open a new tab instead of honoring the internal URL.
                 if (navigations < 3 && IsBlankPage(current) && Activate(window))
                 {
                     address.SetFocus();
@@ -130,13 +130,27 @@ internal static class BrowserGuide
                     }
                 }
                 return false;
-            }, 12000, cancellation)) return new Attempt(result, window, picker);
+            }, 12000, cancellation);
+
+            if (!pageReady)
+            {
+                if (result != Result.PageUnavailable || openPageGuide == null || !IsWindowVisible(window))
+                    return new Attempt(result, window, picker);
+
+                openPageGuide();
+                var opened = WaitFor(() => !IsWindowVisible(window) || FindExtensionsDocument(window, page) != null,
+                    developerModeWait, cancellation, 250);
+                if (!opened || !IsWindowVisible(window))
+                    return new Attempt(result, window, picker);
+                result = Result.Manual;
+                load = FindLoadButton(window, page);
+            }
 
             if (load == null)
             {
                 // Allow the page a moment to finish exposing its controls before prompting.
                 WaitFor(() => (load = FindLoadButton(window, page)) != null, 650, cancellation);
-                if (load == null && IsWindowVisible(window))
+                if (load == null && developerModeGuide != null && IsWindowVisible(window))
                 {
                     FocusDeveloperMode(window, page);
                     developerModeGuide(true);

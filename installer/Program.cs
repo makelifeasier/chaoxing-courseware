@@ -211,7 +211,7 @@ internal sealed class Installer : Form
     private Task<BrowserGuide.Result> GuideBrowser(string name, string exe, string page, string folder,
         CancellationToken cancellation)
     {
-        var start = BrowserGuide.NewWindow(exe);
+        var start = BrowserGuide.NewWindow(exe, page);
         IProgress<bool> guide = new Progress<bool>(waiting =>
         {
             if (IsDisposed || cancellation.IsCancellationRequested) return;
@@ -225,11 +225,19 @@ internal sealed class Installer : Form
                 Environment.NewLine + "开启后自动继续，最多等待 90 秒。";
             Show();
         });
+        IProgress<string> openPage = new Progress<string>(address =>
+        {
+            if (IsDisposed || cancellation.IsCancellationRequested) return;
+            status.Text = "请切到刚打开的 " + name + " 窗口，在地址栏输入 " + address + "。" +
+                Environment.NewLine + "扩展页打开后会自动继续，最多等待 90 秒。";
+            Show();
+        });
         return Task.Run(() =>
         {
             try
             {
-                return BrowserGuide.Open(start, page, folder, guide.Report, cancellation).Install(page, folder, cancellation);
+                return BrowserGuide.Open(start, page, folder, guide.Report, cancellation,
+                    openPageGuide: () => openPage.Report(page)).Install(page, folder, cancellation);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception error)
