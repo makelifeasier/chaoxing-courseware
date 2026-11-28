@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -6,6 +7,8 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -42,13 +45,14 @@ internal sealed class Installer : Form
     private readonly CheckBox edge = new CheckBox { Text = "Microsoft Edge", AutoSize = true };
     private readonly CheckBox chrome = new CheckBox { Text = "Google Chrome", AutoSize = true };
     private readonly CheckBox cleanup = new CheckBox { Text = "完成后删除这个安装器", AutoSize = true };
-    private readonly Button prepare = new Button { Text = "准备安装", AutoSize = true };
+    private readonly Button prepare = new Button { Text = "安装", AutoSize = true };
     private readonly Button finish = new Button { Text = "已完成安装", AutoSize = true, Enabled = false };
     private readonly Button copy = new Button { Text = "复制路径", AutoSize = true, Enabled = false };
     private readonly TextBox installPath = new TextBox { ReadOnly = true, Dock = DockStyle.Fill };
     private readonly Label status = new Label { AutoSize = true, MaximumSize = new Size(530, 0) };
     private readonly string edgeExe = FindBrowser("msedge.exe", @"Microsoft\Edge\Application");
     private readonly string chromeExe = FindBrowser("chrome.exe", @"Google\Chrome\Application");
+    private CancellationTokenSource installation;
 
     internal Installer()
     {
@@ -68,7 +72,7 @@ internal sealed class Installer : Form
         var author = new LinkLabel { Text = "GitHub / @makelifeasier", AutoSize = true };
         author.LinkClicked += delegate { Process.Start("https://github.com/makelifeasier/chaoxing-courseware"); };
         Add(layout, author);
-        Add(layout, new Label { Text = "选择浏览器。准备完成后，在扩展页开启开发人员模式，点「加载解压缩的扩展」，然后粘贴下方路径。", AutoSize = true, MaximumSize = new Size(530, 0) });
+        Add(layout, new Label { Text = "勾选浏览器后点击「安装」。首次使用时，按提示在浏览器中开启开发人员模式，助手会自动继续。", AutoSize = true, MaximumSize = new Size(530, 0) });
 
         edge.Enabled = edgeExe != null;
         chrome.Enabled = chromeExe != null;
@@ -130,41 +134,110 @@ internal sealed class Installer : Form
         return null;
     }
 
-    private void Prepare()
+    private async void Prepare()
     {
+        var useEdge = edge.Checked;
+        var useChrome = chrome.Checked;
+        var run = new CancellationTokenSource();
+        installation = run;
+        prepare.Enabled = edge.Enabled = chrome.Enabled = finish.Enabled = false;
+        cleanup.Enabled = false;
         try
         {
             var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "makelifeasier", "ChaoxingCourseware");
-            Directory.CreateDirectory(root);
-            var stage = Path.Combine(root, "setup-" + Guid.NewGuid().ToString("N"));
-            using (var zip = Program.ReadPackage()) zip.ExtractToDirectory(stage);
-            var staged = Path.Combine(stage, "extension");
-            if (!File.Exists(Path.Combine(staged, "manifest.json"))) throw new IOException("安装包缺少 manifest.json。");
-            // A stable directory keeps the unpacked extension ID and its local data across updates.
-            var destination = Path.Combine(root, "extension");
-            Directory.CreateDirectory(destination);
-            foreach (var file in Directory.GetFiles(staged, "*", SearchOption.AllDirectories))
-            {
-                var target = Path.Combine(destination, file.Substring(staged.Length + 1));
-                Directory.CreateDirectory(Path.GetDirectoryName(target));
-                File.Copy(file, target, true);
-            }
-            Directory.Delete(stage, true);
+            string destination;
+            using (var zip = Program.ReadPackage()) destination = ExtensionFiles.Install(root, zip);
             installPath.Text = destination;
             copy.Enabled = true;
-            finish.Enabled = true;
-            CopyPath();
-            var failures = "";
-            if (edge.Checked && !OpenBrowser(edgeExe, "edge://extensions/")) failures += " Edge";
-            if (chrome.Checked && !OpenBrowser(chromeExe, "chrome://extensions/")) failures += " Chrome";
-            status.Text = failures.Length == 0
-                ? "已准备文件。请在所选浏览器确认加载。已用此助手安装过的，可在扩展页点「重新加载」。"
-                : "文件已准备。以下浏览器未自动打开，请手动打开扩展页：" + failures;
+            status.Text = "正在打开浏览器扩展页…";
+            var results = new List<string>();
+            var allInstalled = true;
+            const string edgePage = "edge://extensions/";
+            const string chromePage = "chrome://extensions/";
+            if (useEdge)
+            {
+                var result = await GuideBrowser("Edge", edgeExe, edgePage, destination, run.Token);
+                results.Add("Edge · " + Describe(result, edgePage));
+                allInstalled &= result == BrowserGuide.Result.Installed;
+            }
+            if (useChrome)
+            {
+                run.Token.ThrowIfCancellationRequested();
+                status.Text = "正在打开 Chrome 扩展页…";
+                var result = await GuideBrowser("Chrome", chromeExe, chromePage, destination, run.Token);
+                results.Add("Chrome · " + Describe(result, chromePage));
+                allInstalled &= result == BrowserGuide.Result.Installed;
+            }
+            status.Text = string.Join(Environment.NewLine, results);
+            if (allInstalled)
+            {
+                MessageBox.Show(status.Text, "安装成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Finish();
+                return;
+            }
+            Show();
+            Activate();
         }
+        catch (OperationCanceledException) { }
         catch (Exception error)
         {
-            status.Text = "准备失败。 " + error.Message;
+            if (!IsDisposed)
+            {
+                status.Text = "安装失败。 " + error.Message;
+                Show();
+            }
         }
+        finally
+        {
+            installation = null;
+            run.Dispose();
+            if (!IsDisposed)
+            {
+                edge.Enabled = edgeExe != null;
+                chrome.Enabled = chromeExe != null;
+                prepare.Enabled = edge.Checked || chrome.Checked;
+                finish.Enabled = installPath.Text.Length != 0;
+                cleanup.Enabled = true;
+            }
+        }
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        base.OnFormClosing(e);
+        if (!e.Cancel && installation != null) installation.Cancel();
+    }
+
+    private Task<BrowserGuide.Result> GuideBrowser(string name, string exe, string page, string folder,
+        CancellationToken cancellation)
+    {
+        var start = BrowserGuide.NewWindow(exe);
+        IProgress<bool> guide = new Progress<bool>(waiting =>
+        {
+            if (IsDisposed || cancellation.IsCancellationRequested) return;
+            if (!waiting)
+            {
+                Hide();
+                return;
+            }
+            var location = name == "Edge" ? "扩展页左侧（窄窗口先展开「扩展」菜单）" : "扩展页右上角";
+            status.Text = "请切到 " + name + "，在" + location + "开启「开发人员模式」。" +
+                Environment.NewLine + "开启后自动继续，最多等待 90 秒。";
+            Show();
+        });
+        return Task.Run(() =>
+        {
+            try
+            {
+                return BrowserGuide.Open(start, page, folder, guide.Report, cancellation).Install(page, folder, cancellation);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception error)
+            {
+                Debug.WriteLine(error);
+                return BrowserGuide.Result.Unverified;
+            }
+        });
     }
 
     private void CopyPath()
@@ -173,10 +246,27 @@ internal sealed class Installer : Form
         catch { status.Text = "剪贴板正忙，请手动复制路径框里的内容。"; }
     }
 
-    private static bool OpenBrowser(string exe, string url)
+    private static string Describe(BrowserGuide.Result result, string page)
     {
-        try { Process.Start(new ProcessStartInfo(exe, url) { UseShellExecute = false }); return true; }
-        catch { return false; }
+        switch (result)
+        {
+            case BrowserGuide.Result.Installed:
+                return "安装成功";
+            case BrowserGuide.Result.Unverified:
+                return "未能核对安装结果，请在 " + page + " 查看扩展和浏览器提示。";
+            case BrowserGuide.Result.DeveloperModeTimedOut:
+                return "等待开发人员模式超时。请在 " + page + " 开启后重试；若开关不可用，请查看浏览器的管理提示。";
+            case BrowserGuide.Result.PickerOpen:
+                return "请将上方路径粘贴到文件夹窗口的地址栏，回车后选择文件夹。";
+            case BrowserGuide.Result.OpenFailed:
+                return "请打开 " + page + "，用上方路径加载扩展。";
+            case BrowserGuide.Result.WindowUnavailable:
+                return "未找到新浏览器窗口。请先打开浏览器并处理首次启动或选用户的提示，再重试。";
+            case BrowserGuide.Result.PageUnavailable:
+                return "浏览器已打开，但未能进入扩展页。请在地址栏打开 " + page + "，用上方路径手动加载。";
+            default:
+                return "在 " + page + " 打开开发人员模式，点「加载解压缩的扩展」，再粘贴上方路径。";
+        }
     }
 
     private void Finish()
@@ -184,7 +274,7 @@ internal sealed class Installer : Form
         if (cleanup.Checked)
         {
             try { ScheduleCleanup(); }
-            catch (Exception error) { status.Text = "安装器未能自动删除，可手动删除。 " + error.Message; return; }
+            catch (Exception error) { status.Text = "安装器未能自动删除，可手动删除。 " + error.Message; Show(); Activate(); return; }
         }
         Close();
     }
@@ -196,15 +286,25 @@ internal sealed class Installer : Form
         using (var stream = File.OpenRead(file))
         using (var sha = SHA256.Create()) digest = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "");
         var literal = "'" + file.Replace("'", "''") + "'";
-        var script = "$ErrorActionPreference='Stop'\n" +
-                     "Wait-Process -Id " + Process.GetCurrentProcess().Id + " -Timeout 20 -ErrorAction SilentlyContinue\n" +
+        string waitForExit;
+        using (var current = Process.GetCurrentProcess())
+            waitForExit = "try { $p=[Diagnostics.Process]::GetProcessById(" + current.Id + ") } catch [ArgumentException] { $p=$null }\n" +
+                          "if ($p) { try { if ($p.StartTime.ToFileTimeUtc() -eq " + current.StartTime.ToFileTimeUtc() +
+                          " -and -not $p.WaitForExit(20000)) { throw '等待安装器退出超时。' } } finally { $p.Dispose() } }\n";
+        var script = "$ErrorActionPreference='Stop'\ntry {\n" + waitForExit +
                      "$installer=" + literal + "\n" +
-                     "if ((Test-Path -LiteralPath $installer -PathType Leaf) -and (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -eq '" + digest + "') {" +
-                     " Remove-Item -LiteralPath $installer -Force }";
+                     "if ([IO.File]::Exists($installer)) {\n" +
+                     "  $file=[IO.File]::OpenRead($installer); $sha=[Security.Cryptography.SHA256]::Create()\n" +
+                     "  try { $hash=[BitConverter]::ToString($sha.ComputeHash($file)).Replace('-','') } finally { $file.Dispose(); $sha.Dispose() }\n" +
+                     "  if ($hash -eq '" + digest + "') { [IO.File]::Delete($installer) }\n" +
+                     "}\n} catch {\n" +
+                     "  [void][Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms')\n" +
+                     "  [void][Windows.Forms.MessageBox]::Show('未能自动删除安装器，可手动删除。','超星课件下载')\n" +
+                     "  exit 1\n}";
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         var powershell = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
-        Process.Start(new ProcessStartInfo(powershell, "-NoProfile -NonInteractive -EncodedCommand " + encoded) {
+        using (Process.Start(new ProcessStartInfo(powershell, "-NoProfile -NonInteractive -EncodedCommand " + encoded) {
             UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden
-        });
+        })) { }
     }
 }
